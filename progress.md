@@ -30,8 +30,8 @@
 - [x] src/web/static/ (프론트엔드)
 
 ## Phase 6: 스케줄러 + 알림
-- [ ] src/scheduler/jobs.py (APScheduler)
-- [ ] src/notifier/telegram_bot.py (텔레그램)
+- [x] src/scheduler/jobs.py (APScheduler)
+- [x] src/notifier/telegram_bot.py (텔레그램)
 
 ## Phase 7: 한국투자증권 API 클라이언트
 - [ ] src/kis_client/auth.py (인증)
