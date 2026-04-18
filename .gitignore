@@ -1,1 +1,41 @@
-_legacy_reference/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 설정 (민감 정보 포함)
+config/config.yaml
+
+# 데이터베이스
+data/
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+logs/
+*.log
+
+# 테스트 커버리지
+htmlcov/
+.coverage
+.pytest_cache/

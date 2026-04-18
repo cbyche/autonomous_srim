@@ -1,0 +1,48 @@
+[project]
+name = "autonomous-srim"
+version = "0.1.0"
+description = "S-RIM 기반 자동매매 시스템 (한국투자증권 API 연동)"
+requires-python = ">=3.11"
+dependencies = [
+    # 핵심 연산
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "numpy-financial>=1.0",
+
+    # 웹 스크래핑 (S-RIM 데이터 수집)
+    "beautifulsoup4>=4.12",
+    "requests>=2.31",
+    "lxml>=5.0",
+
+    # 웹 대시보드
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "jinja2>=3.1",
+
+    # 데이터베이스
+    "sqlalchemy>=2.0",
+
+    # 설정 관리
+    "pyyaml>=6.0",
+
+    # 스케줄링
+    "apscheduler>=3.10",
+
+    # 알림 (텔레그램)
+    "python-telegram-bot>=21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",           # FastAPI 테스트용
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

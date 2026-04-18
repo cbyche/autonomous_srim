@@ -1,0 +1,41 @@
+# ============================================================
+# Autonomous S-RIM 설정 파일 템플릿
+# 이 파일을 config.yaml로 복사한 후 실제 값을 입력하세요.
+# config.yaml은 .gitignore에 의해 버전 관리에서 제외됩니다.
+# ============================================================
+
+# 한국투자증권 API 설정
+kis:
+  app_key: "YOUR_APP_KEY"
+  app_secret: "YOUR_APP_SECRET"
+  account_no: "12345678"       # 계좌번호 앞 8자리
+  account_product: "01"        # 계좌번호 뒤 2자리 (종합계좌: 01)
+  mode: "paper"                # "paper" (모의투자) | "real" (실전투자)
+
+# 텔레그램 알림 설정
+telegram:
+  bot_token: "YOUR_TELEGRAM_BOT_TOKEN"
+  chat_id: "YOUR_TELEGRAM_CHAT_ID"
+
+# 스케줄 설정
+schedule:
+  # S-RIM 전체 분석 주기: "daily_4am" (매일 04:00) | "weekly_sat_4am" (매주 토 04:00)
+  srim_analysis: "weekly_sat_4am"
+  # 장중 매도 조건 체크 주기 (분 단위)
+  sell_check_interval_minutes: 10
+
+# 매매 전략 설정
+trading:
+  # 운영 모드: "approval" (승인 후 실행) | "auto" (자동 실행 후 보고)
+  mode: "approval"
+  # 매수 마진: 현재가 < 매수가격 × buy_margin 일 때 매수 대상
+  buy_margin: 0.9
+  # 종목당 최대 투자금 (원)
+  max_investment_per_stock: 5000000
+  # Dry Run 모드: true 이면 실제 주문 없이 시뮬레이션만 수행
+  dry_run: true
+
+# 데이터베이스 설정
+database:
+  # SQLite DB 파일 경로 (프로젝트 루트 기준 상대경로)
+  url: "sqlite:///data/autonomous_srim.db"
