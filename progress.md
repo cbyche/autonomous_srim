@@ -17,8 +17,8 @@
 - [x] 레거시 CSV 기반 검증 테스트
 
 ## Phase 3: 데이터베이스
-- [ ] src/database/models.py (ORM 모델)
-- [ ] src/database/repository.py (CRUD)
+- [x] src/database/models.py (ORM 모델)
+- [x] src/database/repository.py (CRUD)
 
 ## Phase 4: 매매 전략 엔진
 - [ ] src/strategy/signal.py (시그널 정의)
