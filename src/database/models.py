@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Enum, func
 from sqlalchemy.orm import declarative_base, relationship
 import enum
 
@@ -10,6 +10,7 @@ class SignalType(enum.Enum):
     SELL_STAGE_1 = "sell_stage_1"
     SELL_STAGE_2 = "sell_stage_2"
     SELL_STAGE_3 = "sell_stage_3"
+    SELL_STAGE_4 = "sell_stage_4"
     FORCE_SELL = "force_sell"
 
 class OrderType(enum.Enum):
@@ -29,14 +30,21 @@ class WatchStock(Base):
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String(10), unique=True, index=True, nullable=False)
     name = Column(String(50), nullable=False)
-    is_active = Column(Boolean, default=True)  # 감시 활성화 여부
+    industry = Column(String(100), nullable=True)  # 업종 정보
+    product = Column(String(500), nullable=True)   # 주요 제품/기업 개요
+    is_active = Column(Boolean, default=True)      # 감시 활성화 여부
     added_at = Column(DateTime, default=datetime.utcnow)
     
     # S-RIM 최신 분석 가격 캐싱
-    buy_price = Column(Integer, nullable=True)
-    proper_price = Column(Integer, nullable=True)
-    sell_price = Column(Integer, nullable=True)
-    last_price = Column(Integer, nullable=True)
+    buy_target_price = Column(Integer, nullable=True)
+    sell_target_1 = Column(Integer, nullable=True)
+    sell_target_2 = Column(Integer, nullable=True)
+    sell_target_3 = Column(Integer, nullable=True)
+    sell_target_4 = Column(Integer, nullable=True)
+    
+    roe = Column(Float, default=0.0)         # 랭킹 점수 계산용 ROE
+    buy_yield = Column(Float, default=0.0)   # 랭킹 점수 계산용 매수기대수익률(Buy Yield)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
 class HoldingStage(Base):
     """보유 종목별 매도 단계 추적"""

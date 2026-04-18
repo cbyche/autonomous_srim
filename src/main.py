@@ -16,10 +16,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def run_web_server():
+def run_web_server(app_instance):
     """FastAPI 웹 대시보드를 실행합니다."""
     logger.info("Starting Web Dashboard on port 8000...")
-    uvicorn.run("src.web.app:app", host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app_instance, host="0.0.0.0", port=8000, log_level="info")
 
 async def main():
     parser = argparse.ArgumentParser(description="Autonomous S-RIM Trading System")
@@ -41,11 +41,7 @@ async def main():
         parser.print_help()
         return
 
-    # 1. 웹 서버 시작 (백그라운드 스레드)
-    if args.web or args.all:
-        web_thread = threading.Thread(target=run_web_server, daemon=True)
-        web_thread.start()
-
+    from src.web.app import app
     notifier = None
     
     # 2. 텔레그램 봇 초기화
@@ -58,6 +54,12 @@ async def main():
         logger.info("Initializing Scheduler...")
         scheduler = SchedulerManager(config, notifier=notifier)
         scheduler.start()
+        app.state.scheduler = scheduler
+
+    # 1. 웹 서버 시작 (백그라운드 스레드)
+    if args.web or args.all:
+        web_thread = threading.Thread(target=run_web_server, args=(app,), daemon=True)
+        web_thread.start()
 
     # 4. 텔레그램 봇 실행 (메인 스레드 점유)
     if notifier and (args.bot or args.all):

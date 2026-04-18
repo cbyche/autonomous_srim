@@ -13,52 +13,88 @@ class SchedulerManager:
         self.config = config
         self.notifier = notifier
         self.scheduler = AsyncIOScheduler()
+        self._setup_jobs()
+
+    def update_config_and_reload(self, new_config: dict):
+        """설정을 업데이트하고 스케줄을 재등록한다."""
+        self.config = new_config
+        self._setup_jobs()
+        logger.info("Scheduler jobs reloaded with new configuration.")
+
+    def _setup_jobs(self):
+        """설정에 따라 분석 스케줄을 등록한다."""
+        # 1. 보유 종목 분석 (03:00 AM)
+        holdings_mode = get_config_value(self.config, "scheduler", "holdings_analysis_mode", default="daily")
+        h_trigger = CronTrigger(day_of_week='mon-fri', hour=3, minute=0) if holdings_mode == "daily" else CronTrigger(day_of_week='sat', hour=3, minute=0)
         
-        interval = get_config_value(config, "trading", "monitoring_interval_min", default=10)
-        
-        # 장중 모니터링: 월-금 09:00 ~ 15:30
         self.scheduler.add_job(
-            self.market_monitoring_job,
-            CronTrigger(day_of_week='mon-fri', hour='9-15', minute=f'*/{interval}'),
-            id="market_monitoring",
-            name="장중 가격 모니터링 및 시그널 체크",
+            self.holdings_analysis_job,
+            h_trigger,
+            id="holdings_analysis",
+            name="보유 종목 S-RIM 분석 (03:00)",
             replace_existing=True
         )
 
-    async def market_monitoring_job(self):
-        """장중 모니터링을 수행하고 시그널이 생기면 텔레그램으로 알림을 보냅니다."""
-        logger.info("Market monitoring job started.")
+        # 2. KRX 전체 분석 (04:00 AM)
+        market_mode = get_config_value(self.config, "scheduler", "market_analysis_mode", default="weekly")
+        m_trigger = CronTrigger(day_of_week='mon-fri', hour=4, minute=0) if market_mode == "daily" else CronTrigger(day_of_week='sat', hour=4, minute=0)
+        
+        self.scheduler.add_job(
+            self.market_analysis_job,
+            m_trigger,
+            id="market_analysis",
+            name="KRX 전체 S-RIM 분석 (04:00)",
+            replace_existing=True
+        )
+
+        # 3. 장중 모니터링 (현재가 기반 시그널 체크)
+        interval = get_config_value(self.config, "trading", "monitoring_interval_min", default=10)
+        self.scheduler.add_job(
+            self.intraday_monitoring_job,
+            CronTrigger(day_of_week='mon-fri', hour='9-15', minute=f'*/{interval}'),
+            id="intraday_monitoring",
+            name="장중 시그널 모니터링",
+            replace_existing=True
+        )
+
+    async def holdings_analysis_job(self):
+        """새벽 3시: 보유 종목의 재무 데이터를 갱신하고 S-RIM 가격 재산출"""
+        logger.info("Starting scheduled holdings analysis (03:00)...")
         db = SessionLocal()
         try:
             pm = PortfolioManager(db, self.config)
-            pm.scan_watch_stocks()
+            pm.analyze_holdings()
+        finally:
+            db.close()
+
+    async def market_analysis_job(self):
+        """새벽 4시: KRX 전 종목 분석 및 매수 후보 발굴"""
+        logger.info("Starting scheduled full market analysis (04:00)...")
+        db = SessionLocal()
+        try:
+            pm = PortfolioManager(db, self.config)
+            pm.analyze_full_market()
+        finally:
+            db.close()
+
+    async def intraday_monitoring_job(self):
+        """장중: 현재가 기반으로 기 산출된 S-RIM 가격과 대조하여 시그널 발생"""
+        db = SessionLocal()
+        try:
+            pm = PortfolioManager(db, self.config)
+            # 여기서는 FnGuide를 긁지 않고, 실시간 시세만 가져와서 체크
+            pm.monitor_signals()
             
-            # 새롭게 생성된(Pending) 시그널 전송 로직
-            # 실제로는 DB 쿼리를 통해 최근 1분(또는 interval) 내 생성된 시그널을 찾아야 함
-            # 여기서는 예시로 pending_signals를 모두 가져옴
+            # 시그널 알림 로직
             signals = pm.repo.get_pending_signals()
-            auto_trade = get_config_value(self.config, "trading", "auto_trade", default=False)
-            
             for sig in signals:
                 if self.notifier:
                     await self.notifier.send_signal_notification(
-                        signal_id=sig.id,
-                        code=sig.code,
-                        name=sig.name,
-                        sig_type=sig.signal_type.name,
-                        price=sig.current_price,
-                        require_approval=not auto_trade
+                        signal_id=sig.id, code=sig.code, name=sig.name,
+                        sig_type=sig.signal_type.name, price=sig.current_price
                     )
-                
-                # 자동 매매 모드인 경우 승인 대기 없이 즉시 체결로 넘김 (시뮬레이션)
-                if auto_trade:
-                    pm.execute_signal(sig.id, execution_price=sig.current_price, execution_qty=0) # Qty는 추후 KIS 적용시 계산
-                    
-        except Exception as e:
-            logger.error(f"Error in monitoring job: {e}")
         finally:
             db.close()
-            logger.info("Market monitoring job finished.")
 
     def start(self):
         self.scheduler.start()

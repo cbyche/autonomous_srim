@@ -13,22 +13,35 @@ class Repository:
             query = query.filter(WatchStock.is_active == True)
         return query.all()
 
-    def add_watch_stock(self, code: str, name: str, buy_price: Optional[int] = None,
-                        proper_price: Optional[int] = None, sell_price: Optional[int] = None,
-                        last_price: Optional[int] = None) -> WatchStock:
+    def add_watch_stock(self, code: str, name: str, industry: str, product: str,
+                        buy_target_price: int, sell_target_1: int, sell_target_2: int, 
+                        sell_target_3: int, sell_target_4: int,
+                        roe: float = 0.0, buy_yield: float = 0.0):
         stock = self.db.query(WatchStock).filter(WatchStock.code == code).first()
-        if not stock:
-            stock = WatchStock(code=code, name=name)
+        if stock:
+            stock.buy_target_price = buy_target_price
+            stock.sell_target_1 = sell_target_1
+            stock.sell_target_2 = sell_target_2
+            stock.sell_target_3 = sell_target_3
+            stock.sell_target_4 = sell_target_4
+            stock.industry = industry
+            stock.product = product
+            stock.roe = roe
+            stock.buy_yield = buy_yield
+            stock.is_active = True
+        else:
+            stock = WatchStock(
+                code=code, name=name, industry=industry, product=product,
+                buy_target_price=buy_target_price,
+                sell_target_1=sell_target_1,
+                sell_target_2=sell_target_2,
+                sell_target_3=sell_target_3,
+                sell_target_4=sell_target_4,
+                roe=roe,
+                buy_yield=buy_yield
+            )
             self.db.add(stock)
-        
-        stock.is_active = True
-        stock.buy_price = buy_price
-        stock.proper_price = proper_price
-        stock.sell_price = sell_price
-        stock.last_price = last_price
-        
         self.db.commit()
-        self.db.refresh(stock)
         return stock
 
     def remove_watch_stock(self, code: str) -> bool:

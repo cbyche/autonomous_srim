@@ -27,21 +27,21 @@ def test_watch_stock_crud(db):
     repo = Repository(db)
     
     # 생성
-    stock = repo.add_watch_stock("005930", "삼성전자", buy_price=60000)
+    stock = repo.add_watch_stock("005930", "삼성전자", "반도체", "메모리", 60000, 70000, 75000, 80000, 90000)
     assert stock.code == "005930"
     assert stock.is_active is True
-    assert stock.buy_price == 60000
+    assert stock.buy_target_price == 60000
     
     # 조회
     stocks = repo.get_watch_stocks()
     assert len(stocks) == 1
     
     # 업데이트 (동일 코드 추가 시 업데이트됨)
-    repo.add_watch_stock("005930", "삼성전자", buy_price=65000, proper_price=70000)
+    repo.add_watch_stock("005930", "삼성전자", "반도체", "메모리", 65000, 70000, 75000, 80000, 90000)
     stocks = repo.get_watch_stocks()
     assert len(stocks) == 1
-    assert stocks[0].buy_price == 65000
-    assert stocks[0].proper_price == 70000
+    assert stocks[0].buy_target_price == 65000
+    assert stocks[0].sell_target_1 == 70000
     
     # 비활성화
     repo.remove_watch_stock("005930")

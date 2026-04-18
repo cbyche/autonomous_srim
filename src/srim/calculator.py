@@ -82,31 +82,36 @@ def calculate_weighted_average(minus2: float, minus1: float, minus0: float) -> f
             return minus0  # 지속 하락 시 최신값 사용
 
 
-def calculate_srim(b0: float, roe: float, ke: float, shares: int, pos: int) -> Tuple[int, int, int, int]:
+def calculate_srim(b0: float, roe: float, ke: float, shares: int, pos: int) -> Tuple[int, int, int, int, int]:
     """
-    S-RIM 가격 4단계 산출
-    반환값: (매수가격, 적정가격, 매도가격, 최종가격)
+    S-RIM 가격 5단계 산출
+    반환값: (매수적정가격, 1차매도가격, 2차매도가격, 3차매도가격, 4차매도가격)
     """
-    # 1. 매도가격 (할인율 1.0)
+    # 1. 매도가격 그룹 (할인율 1.0)
     sell_price_book = calculate_price_book(b0, roe, ke, shares, 1.0)
     sell_price_lecture = calculate_price_lecture(b0, roe, ke, shares, 1.0, pos)
-    sell_price = min(sell_price_book, sell_price_lecture)
-    last_price = max(sell_price_book, sell_price_lecture)
+    sell_target_3 = min(sell_price_book, sell_price_lecture) # 3차 매도가
+    sell_target_4 = max(sell_price_book, sell_price_lecture) # 4차 매도가
     
-    # 2. 적정가격 (할인율 0.9)
+    # 2. 적정가격 그룹 (할인율 0.9)
     proper_price_book = calculate_price_book(b0, roe, ke, shares, 0.9)
     proper_price_lecture = calculate_price_lecture(b0, roe, ke, shares, 0.9, pos)
-    proper_price = min(proper_price_book, proper_price_lecture)
+    sell_target_1 = min(proper_price_book, proper_price_lecture) # 1차 매도가
+    sell_target_2 = max(proper_price_book, proper_price_lecture) # 2차 매도가
     
-    # 3. 매수가격 (할인율 0.8)
+    # 3. 매수가격 그룹 (할인율 0.8)
     buy_price_book = calculate_price_book(b0, roe, ke, shares, 0.8)
     buy_price_lecture = calculate_price_lecture(b0, roe, ke, shares, 0.8, pos)
-    buy_price = min(buy_price_book, buy_price_lecture)
+    buy_target_price = min(buy_price_book, buy_price_lecture) # 매수적정가
     
-    # 호가 단위 맞춤
+    # 1차~4차 매도가격 정렬 (모델 간 간극으로 인해 순서가 뒤바뀔 수 있음)
+    sell_targets = sorted([sell_target_1, sell_target_2, sell_target_3, sell_target_4])
+    
+    # 호가 단위 맞춤 및 최종 반환
     return (
-        match_tick_size(buy_price),
-        match_tick_size(proper_price),
-        match_tick_size(sell_price),
-        match_tick_size(last_price)
+        match_tick_size(buy_target_price),
+        match_tick_size(sell_targets[0]),
+        match_tick_size(sell_targets[1]),
+        match_tick_size(sell_targets[2]),
+        match_tick_size(sell_targets[3])
     )
