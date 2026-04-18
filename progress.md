@@ -21,8 +21,8 @@
 - [x] src/database/repository.py (CRUD)
 
 ## Phase 4: 매매 전략 엔진
-- [ ] src/strategy/signal.py (시그널 정의)
-- [ ] src/strategy/portfolio_manager.py (포트폴리오 관리)
+- [x] src/strategy/signal.py (시그널 정의)
+- [x] src/strategy/portfolio_manager.py (포트폴리오 관리)
 
 ## Phase 5: 웹 대시보드
 - [ ] src/web/app.py (FastAPI 앱)
