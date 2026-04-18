@@ -39,6 +39,6 @@
 - [x] src/kis_client/account.py (계좌/주문)
 
 ## Phase 8: 통합 + 문서화
-- [ ] src/main.py (CLI 진입점)
-- [ ] README.md 업데이트
-- [ ] E2E 테스트
+- [x] src/main.py (CLI 진입점)
+- [x] README.md 업데이트
+- [x] E2E 테스트 (Dry-run 수준 검증)
