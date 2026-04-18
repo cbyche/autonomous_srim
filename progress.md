@@ -34,9 +34,9 @@
 - [x] src/notifier/telegram_bot.py (텔레그램)
 
 ## Phase 7: 한국투자증권 API 클라이언트
-- [ ] src/kis_client/auth.py (인증)
-- [ ] src/kis_client/market.py (시세 조회)
-- [ ] src/kis_client/account.py (계좌/주문)
+- [x] src/kis_client/auth.py (인증)
+- [x] src/kis_client/market.py (시세 조회)
+- [x] src/kis_client/account.py (계좌/주문)
 
 ## Phase 8: 통합 + 문서화
 - [ ] src/main.py (CLI 진입점)
