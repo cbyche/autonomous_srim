@@ -49,11 +49,12 @@ def test_calculate_srim():
     shares = 10000
     pos = -1
     
-    buy_p, proper_p, sell_p, last_p = calculate_srim(b0, roe, ke, shares, pos)
+    buy_p, s1, s2, s3, s4 = calculate_srim(b0, roe, ke, shares, pos)
     
     # 모든 가격은 int형이며 호가 단위에 맞춰져 있어야 함
     assert isinstance(buy_p, int)
-    assert isinstance(proper_p, int)
-    assert isinstance(sell_p, int)
-    assert isinstance(last_p, int)
-    assert buy_p <= proper_p <= sell_p <= last_p
+    assert isinstance(s1, int)
+    assert isinstance(s2, int)
+    assert isinstance(s3, int)
+    assert isinstance(s4, int)
+    assert buy_p <= s1 <= s2 <= s3 <= s4

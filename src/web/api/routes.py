@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -30,17 +30,30 @@ def add_to_watch_list(item: WatchStockCreate, db: Session = Depends(get_db)):
     
     if srim_result:
         stock = repo.add_watch_stock(
-            item.code, item.name, 
-            buy_price=srim_result.buy_price,
-            proper_price=srim_result.proper_price,
-            sell_price=srim_result.sell_price,
-            last_price=srim_result.last_price
+            item.code, item.name, srim_result.industry, srim_result.product,
+            buy_target_price=srim_result.buy_target_price,
+            sell_target_1=srim_result.sell_target_1,
+            sell_target_2=srim_result.sell_target_2,
+            sell_target_3=srim_result.sell_target_3,
+            sell_target_4=srim_result.sell_target_4,
+            roe=srim_result.roe, buy_yield=srim_result.buy_yield
         )
         return {"status": "success", "data": stock}
     else:
-        # 데이터가 없어도 추가는 하지만 가격은 None
-        stock = repo.add_watch_stock(item.code, item.name)
-        return {"status": "warning", "message": "S-RIM 분석 실패. 종목은 추가됨.", "data": stock}
+        raise HTTPException(status_code=400, detail="S-RIM 분석 실패. 종목을 추가할 수 없습니다.")
+
+@router.post("/settings/reload-scheduler")
+def reload_scheduler(request: Request):
+    """설정 파일을 다시 읽고 스케줄러를 재시작한다."""
+    config = load_config()
+    
+    # app.state에 저장된 스케줄러 참조
+    scheduler_mgr = getattr(request.app.state, 'scheduler', None)
+    if scheduler_mgr:
+        scheduler_mgr.update_config_and_reload(config)
+        return {"status": "success", "message": "스케줄러 설정이 재적용되었습니다."}
+    else:
+        raise HTTPException(status_code=500, detail="스케줄러 인스턴스를 찾을 수 없습니다.")
 
 @router.delete("/watch-list/{code}")
 def remove_from_watch_list(code: str, db: Session = Depends(get_db)):

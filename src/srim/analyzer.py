@@ -66,6 +66,8 @@ def analyze_stock(code: str, name: str, industry: str, product: str, required_ro
         
     current_price = data['current_price']
     shares = data['shares']
+    industry = data.get('industry', industry)
+    product = data.get('product', product)
     fh = data['fh']
     fh_quater = data['fh_quater']
     fs = data['fs']
@@ -76,9 +78,9 @@ def analyze_stock(code: str, name: str, industry: str, product: str, required_ro
         logger.warning(f"[{code}] {name} ROE 계산 실패: {msg}")
         return None
         
-    # S-RIM 가격 4단계 산출
+    # S-RIM 가격 5단계 산출
     try:
-        buy_price, proper_price, sell_price, last_price = calculate_srim(b0, roe, required_ror, shares, pos)
+        buy_target_price, sell_target_1, sell_target_2, sell_target_3, sell_target_4 = calculate_srim(b0, roe, required_ror, shares, pos)
     except Exception as e:
         logger.warning(f"[{code}] {name} S-RIM 계산 실패: {e}")
         return None
@@ -119,14 +121,16 @@ def analyze_stock(code: str, name: str, industry: str, product: str, required_ro
         industry=industry,
         product=product,
         current_price=current_price,
-        buy_price=buy_price,
-        proper_price=proper_price,
-        sell_price=sell_price,
-        last_price=last_price,
-        buy_yield=round((buy_price - current_price) / current_price * 100, 2) if current_price else 0,
-        proper_yield=round((proper_price - current_price) / current_price * 100, 2) if current_price else 0,
-        sell_yield=round((sell_price - current_price) / current_price * 100, 2) if current_price else 0,
-        last_yield=round((last_price - current_price) / current_price * 100, 2) if current_price else 0,
+        buy_target_price=buy_target_price,
+        sell_target_1=sell_target_1,
+        sell_target_2=sell_target_2,
+        sell_target_3=sell_target_3,
+        sell_target_4=sell_target_4,
+        buy_yield=round((buy_target_price - current_price) / current_price * 100, 2) if current_price else 0,
+        target_1_yield=round((sell_target_1 - current_price) / current_price * 100, 2) if current_price else 0,
+        target_2_yield=round((sell_target_2 - current_price) / current_price * 100, 2) if current_price else 0,
+        target_3_yield=round((sell_target_3 - current_price) / current_price * 100, 2) if current_price else 0,
+        target_4_yield=round((sell_target_4 - current_price) / current_price * 100, 2) if current_price else 0,
         roe=round(roe, 2),
         roe_reference=roe_ref,
         dividend_yield=dividend_yield,

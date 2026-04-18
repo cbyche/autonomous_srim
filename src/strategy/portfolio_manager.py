@@ -3,10 +3,15 @@ import logging
 from sqlalchemy.orm import Session
 
 from src.database.repository import Repository
-from src.database.models import TradeSignal, SignalType, SignalStatus, OrderType
+from src.database.models import TradeSignal, SignalType, SignalStatus, OrderType, HoldingStage, WatchStock
 from src.srim.analyzer import analyze_stock
-from src.strategy.signal import evaluate_signal, calculate_sell_quantity
+from src.strategy.signal import evaluate_signal, calculate_sell_quantity, calculate_buy_quantity
 from src.config import get_config_value
+from src.srim.models import SRIMResult
+
+from src.kis_client.auth import KISAuth
+from src.kis_client.account import KISAccount
+from src.kis_client.market import KISMarket
 
 logger = logging.getLogger(__name__)
 
@@ -16,38 +21,154 @@ class PortfolioManager:
         self.config = config
         self.required_ror = get_config_value(config, "trading", "required_ror_percent", default=8.0)
         self.buy_margin = get_config_value(config, "trading", "buy_margin", default=0.9)
-
-    def scan_watch_stocks(self):
-        """감시 종목 리스트를 순회하며 S-RIM 분석을 수행하고 시그널을 생성한다."""
-        watch_stocks = self.repo.get_watch_stocks(active_only=True)
         
-        for stock in watch_stocks:
-            logger.info(f"[{stock.code}] {stock.name} 분석 시작...")
+        # KIS Clients
+        self.auth = KISAuth(config)
+        self.kis_account = KISAccount(self.auth, config)
+        self.kis_market = KISMarket(self.auth)
+
+    def _calculate_benchmark_amount(self) -> float:
+        """Stage 0인 종목들의 평균 투자금액을 계산한다. 없을 경우 역산 또는 과거 기록 활용."""
+        import os
+        benchmark_file = "data/last_benchmark.txt"
+        
+        holdings = self.repo.db.query(HoldingStage).all()
+        
+        if not holdings:
+            # 보유 종목이 아예 없으면 기본 설정 금액 사용
+            base_amt = get_config_value(self.config, "trading", "base_investment_amount", default=1000000.0)
+            return float(base_amt)
             
-            # TODO: 업종, 주요제품 등은 KRX 리스트에서 가져와야 하지만 여기선 임시값 사용
-            srim_result = analyze_stock(stock.code, stock.name, "", "", self.required_ror)
-            if not srim_result:
-                continue
+        # 1. Stage 0 평균 계산
+        stage0_investments = [h.remaining_qty * h.avg_buy_price for h in holdings if h.stage == 0]
+        if stage0_investments:
+            avg_amount = sum(stage0_investments) / len(stage0_investments)
+            os.makedirs("data", exist_ok=True)
+            with open(benchmark_file, "w") as f: f.write(str(avg_amount))
+            return avg_amount
+            
+        # 2. Stage 1에서 역산 (75% 비중 기준)
+        stage1_investments = [h.remaining_qty * h.avg_buy_price for h in holdings if h.stage == 1]
+        if stage1_investments:
+            avg_amount = (sum(stage1_investments) / len(stage1_investments)) / 0.75
+            os.makedirs("data", exist_ok=True)
+            with open(benchmark_file, "w") as f: f.write(str(avg_amount))
+            return avg_amount
+            
+        # 3. 마지막으로 사용했던 값 로드
+        if os.path.exists(benchmark_file):
+            try:
+                with open(benchmark_file, "r") as f:
+                    return float(f.read().strip())
+            except Exception as e:
+                logger.error(f"벤치마크 파일 읽기 실패: {e}")
                 
-            # 최신 가격 정보 DB 업데이트
-            self.repo.add_watch_stock(
-                stock.code, stock.name, 
-                buy_price=srim_result.buy_price,
-                proper_price=srim_result.proper_price,
-                sell_price=srim_result.sell_price,
-                last_price=srim_result.last_price
+        # 4. 최후의 보루: 설정된 기본 금액
+        return float(get_config_value(self.config, "trading", "base_investment_amount", default=1000000.0))
+
+    def analyze_holdings(self):
+        """새벽 3시: 보유 중인 종목들만 집중 분석하여 S-RIM 목표가 갱신"""
+        holdings = self.repo.db.query(HoldingStage).all()
+        logger.info(f"보유 종목 {len(holdings)}개 분석 시작...")
+        
+        for h in holdings:
+            srim_result = analyze_stock(h.code, h.name, "", "", self.required_ror)
+            if srim_result:
+                self.repo.add_watch_stock(
+                    h.code, h.name, srim_result.industry, srim_result.product,
+                    srim_result.buy_target_price, srim_result.sell_target_1,
+                    srim_result.sell_target_2, srim_result.sell_target_3, srim_result.sell_target_4,
+                    roe=srim_result.roe, buy_yield=srim_result.buy_yield
+                )
+        logger.info("보유 종목 분석 완료.")
+
+    def analyze_full_market(self):
+        """새벽 4시: KRX 전체 종목을 분석하여 매수 후보군 발굴"""
+        from src.srim.data_fetcher import get_krx_list
+        krx_df = get_krx_list()
+        logger.info(f"KRX 전체 {len(krx_df)}개 종목 분석 시작 (새벽 4시 배치)...")
+        
+        for _, row in krx_df.iterrows():
+            # 11가지 필터링 조건을 통과하는지 확인
+            # (analyze_stock 내부에 is_buy_candidate 로직 포함)
+            srim_result = analyze_stock(row['code'], row['name'], row['industry'], row['product'], self.required_ror)
+            
+            if srim_result and srim_result.is_buy_candidate(self.required_ror, self.buy_margin):
+                logger.info(f"✨ 매수 후보 발견: {row['name']} ({row['code']})")
+                self.repo.add_watch_stock(
+                    row['code'], row['name'], srim_result.industry, srim_result.product,
+                    srim_result.buy_target_price, srim_result.sell_target_1,
+                    srim_result.sell_target_2, srim_result.sell_target_3, srim_result.sell_target_4,
+                    roe=srim_result.roe, buy_yield=srim_result.buy_yield
+                )
+        logger.info("KRX 전체 분석 완료.")
+
+    def monitor_signals(self, available_cash: int):
+        """장중: 보유 종목 및 매수 후보 종목들의 실시간 가격만 체크하여 시그널 발생"""
+        holdings = self.repo.db.query(HoldingStage).all()
+        candidates = self.repo.get_watch_stocks(active_only=True)
+        
+        codes = {h.code for h in holdings} | {c.code for c in candidates}
+        benchmark_amount = self._calculate_benchmark_amount()
+        
+        potential_signals = []
+        
+        for code in codes:
+            stock = self.repo.db.query(WatchStock).filter(WatchStock.code == code).first()
+            if not stock: continue
+            
+            # KIS API 연동 실시간 가격
+            current_price = self.kis_market.get_current_price(stock.code)
+            if not current_price:
+                current_price = stock.buy_target_price # API 오류 시 백업
+            
+            srim = SRIMResult(
+                code=stock.code, name=stock.name, industry=stock.industry, product=stock.product,
+                current_price=current_price, 
+                buy_target_price=stock.buy_target_price,
+                sell_target_1=stock.sell_target_1, sell_target_2=stock.sell_target_2,
+                sell_target_3=stock.sell_target_3, sell_target_4=stock.sell_target_4,
+                buy_yield=stock.buy_yield, target_1_yield=0, target_2_yield=0, target_3_yield=0, target_4_yield=0,
+                roe=stock.roe, roe_reference="", dividend_yield=0, dividend_payout_ratio=0,
+                cf_risk_count=0, cf_to_op_avg=0, net_income_4q_sum=0, net_income_deficit_count=0,
+                op_income_4q_sum=0, op_income_deficit_count=0
             )
             
-            holding = self.repo.get_holding_stage(stock.code)
+            holding = self.repo.get_holding_stage(code)
+            sig_type, target_p = evaluate_signal(srim, holding, self.required_ror, benchmark_amount, self.buy_margin)
             
-            signal_type, target_price = evaluate_signal(srim_result, holding, self.buy_margin)
-            
-            if signal_type:
-                logger.info(f"[{stock.code}] 신규 시그널 발생: {signal_type.value} (목표가: {target_price}, 현재가: {srim_result.current_price})")
-                self.repo.add_signal(
-                    stock.code, stock.name, signal_type, 
-                    current_price=srim_result.current_price, target_price=target_price
-                )
+            if sig_type:
+                # Mix Score 5:5 계산
+                yield_score = min(stock.buy_yield, 100) / 100.0
+                quality_score = min(stock.roe / self.required_ror, 4.0) / 4.0 if self.required_ror > 0 else 0
+                composite_score = (yield_score * 0.5) + (quality_score * 0.5)
+                
+                potential_signals.append({
+                    'stock': stock, 'srim': srim, 'holding': holding,
+                    'type': sig_type, 'target_price': target_p,
+                    'score': composite_score,
+                    'is_addon': holding is not None and sig_type == SignalType.BUY
+                })
+
+        # 1순위 추가매수, 2순위 종합점수 높은 순
+        potential_signals.sort(key=lambda x: (x['is_addon'], x['score']), reverse=True)
+
+        remaining_cash = available_cash
+        for sig in potential_signals:
+            if sig['type'] == SignalType.BUY:
+                qty = calculate_buy_quantity(sig['holding'], sig['srim'], benchmark_amount)
+                if qty <= 0: continue
+                
+                needed_cash = int(qty * sig['srim'].current_price * 1.01)
+                
+                if remaining_cash >= needed_cash:
+                    logger.info(f"[{sig['stock'].code}] BUY 승인 (점수: {sig['score']:.2f}, 수량: {qty})")
+                    self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                    remaining_cash -= needed_cash
+                else:
+                    logger.info(f"[{sig['stock'].code}] 현금 부족으로 BUY 스킵 (필요: {needed_cash}, 잔고: {remaining_cash})")
+            else:
+                self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
 
     def execute_signal(self, signal_id: int, execution_price: int, execution_qty: int):
         """
@@ -58,6 +179,14 @@ class PortfolioManager:
         if not signal or signal.status != SignalStatus.PENDING:
             return False
             
+        order_type_str = "BUY" if signal.signal_type == SignalType.BUY else "SELL"
+        
+        # 1. KIS API 실제 주문 발송
+        success = self.kis_account.place_order(signal.code, execution_qty, execution_price, order_type_str)
+        if not success:
+            logger.error(f"주문 실패로 인해 시그널({signal_id}) 집행 취소")
+            return False
+        
         order_type = OrderType.BUY if signal.signal_type == SignalType.BUY else OrderType.SELL
         
         # 주문 히스토리 추가
@@ -94,8 +223,10 @@ class PortfolioManager:
                     new_stage = 1
                 elif signal.signal_type == SignalType.SELL_STAGE_2:
                     new_stage = 2
-                elif signal.signal_type in (SignalType.SELL_STAGE_3, SignalType.FORCE_SELL):
+                elif signal.signal_type == SignalType.SELL_STAGE_3:
                     new_stage = 3
+                elif signal.signal_type in (SignalType.SELL_STAGE_4, SignalType.FORCE_SELL):
+                    new_stage = 4
                     
                 if new_remain == 0:
                     self.repo.remove_holding_stage(signal.code)

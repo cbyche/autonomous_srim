@@ -1,5 +1,7 @@
 import math
 import logging
+import random
+import time
 from typing import Tuple, Optional
 
 import pandas as pd
@@ -7,6 +9,42 @@ import requests
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
+
+# 브라우저 위장을 위한 User-Agent 리스트
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+]
+
+# 요청 간 최소 간격 유지를 위한 전역 변수
+_last_request_time = 0.0
+
+def _get_safe_session() -> requests.Session:
+    """랜덤 헤더가 설정된 세션 반환"""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "http://comp.fnguide.com/",
+    })
+    return session
+
+def _wait_for_rate_limit(min_gap: float = 0.5, max_gap: float = 1.5):
+    """요청 간 랜덤 지연 추가"""
+    global _last_request_time
+    now = time.time()
+    elapsed = now - _last_request_time
+    
+    # 설정된 최소 간격보다 빨리 요청이 들어오면 대기
+    wait_time = random.uniform(min_gap, max_gap)
+    if elapsed < wait_time:
+        time.sleep(wait_time - elapsed)
+        
+    _last_request_time = time.time()
 
 def get_krx_list() -> pd.DataFrame:
     """KRX 상장법인목록 다운로드"""
@@ -44,13 +82,29 @@ def parse_fnguide(code: str) -> Tuple[bool, str, dict]:
     url_finance = f'http://comp.fnguide.com/SVO2/asp/SVD_Finance.asp?pGB=1&gicode=A{code}&cID=&MenuYn=Y&ReportGB=D&NewMenuID=103&stkGb=701'
     
     result = {}
+    session = _get_safe_session()
     
     try:
         # 1. Main 페이지 파싱
-        resp = requests.get(url_main, timeout=10)
-        html_snapshot = BeautifulSoup(resp.content, 'html.parser').find('body')
+        _wait_for_rate_limit()
+        resp = session.get(url_main, timeout=10)
+        soup = BeautifulSoup(resp.content, 'html.parser')
+        html_snapshot = soup.find('body')
         tables = pd.read_html(str(html_snapshot.find_all('table')))
         
+        # 업종 및 기업개요 추출 (지능형 필터링용)
+        try:
+            # WICS 업종 추출
+            stk_group = soup.find('em', class_='stk_group')
+            result['industry'] = stk_group.text.replace('WICS 업종 :', '').strip() if stk_group else ""
+            
+            # 기업개요 추출
+            um_txt = soup.find('div', class_='um_txt')
+            result['product'] = um_txt.text.strip() if um_txt else ""
+        except:
+            result['industry'] = ""
+            result['product'] = ""
+
         # 현재가 & 발행주식수
         cs = tables[0]
         result['current_price'] = int(cs.iloc[0, 1].split('/')[0].replace(',', ''))
@@ -110,7 +164,8 @@ def parse_fnguide(code: str) -> Tuple[bool, str, dict]:
         result['fh_quater'] = fh_quater
         
         # 2. Finance 페이지 파싱
-        resp2 = requests.get(url_finance, timeout=10)
+        _wait_for_rate_limit()
+        resp2 = session.get(url_finance, timeout=10)
         html_fs = BeautifulSoup(resp2.content, 'html.parser').find('body')
         tables2 = pd.read_html(str(html_fs.find_all('table')))
         
