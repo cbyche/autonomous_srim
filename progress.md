@@ -25,9 +25,9 @@
 - [x] src/strategy/portfolio_manager.py (포트폴리오 관리)
 
 ## Phase 5: 웹 대시보드
-- [ ] src/web/app.py (FastAPI 앱)
-- [ ] src/web/api/ (REST API 라우터)
-- [ ] src/web/static/ (프론트엔드)
+- [x] src/web/app.py (FastAPI 앱)
+- [x] src/web/api/ (REST API 라우터)
+- [x] src/web/static/ (프론트엔드)
 
 ## Phase 6: 스케줄러 + 알림
 - [ ] src/scheduler/jobs.py (APScheduler)

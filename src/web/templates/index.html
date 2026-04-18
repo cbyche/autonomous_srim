@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autonomous S-RIM | AI Trading</title>
+    <!-- Modern Typography: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Background Elements -->
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+    <div class="bg-orb orb-3"></div>
+
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="glass-panel sidebar">
+            <div class="logo">
+                <i class="fa-solid fa-chart-line gradient-text"></i>
+                <h2>Auto<span class="gradient-text">SRIM</span></h2>
+            </div>
+            <nav>
+                <a href="#" class="nav-item active"><i class="fa-solid fa-house"></i> Dashboard</a>
+                <a href="#" class="nav-item"><i class="fa-solid fa-wallet"></i> Portfolio</a>
+                <a href="#" class="nav-item"><i class="fa-solid fa-eye"></i> Watchlist</a>
+                <a href="#" class="nav-item"><i class="fa-solid fa-bolt"></i> Signals</a>
+                <a href="#" class="nav-item"><i class="fa-solid fa-gear"></i> Settings</a>
+            </nav>
+            <div class="status-card">
+                <div class="status-indicator live"></div>
+                <span>System Status: <strong>Live</strong></span>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <div class="search-bar glass-panel">
+                    <i class="fa-solid fa-search"></i>
+                    <input type="text" placeholder="Search stock code or name...">
+                </div>
+                <div class="user-profile glass-panel">
+                    <div class="avatar"><i class="fa-solid fa-robot"></i></div>
+                    <div class="info">
+                        <span class="name">AI Trader</span>
+                        <span class="role">Admin</span>
+                    </div>
+                </div>
+            </header>
+
+            <div class="dashboard-grid">
+                <!-- Summary Cards -->
+                <div class="glass-panel stat-card">
+                    <div class="icon-wrapper blue"><i class="fa-solid fa-sack-dollar"></i></div>
+                    <div class="stat-info">
+                        <h3>Total Value</h3>
+                        <p class="value">₩ 124,500,000</p>
+                        <span class="trend up"><i class="fa-solid fa-arrow-trend-up"></i> +2.4%</span>
+                    </div>
+                </div>
+                <div class="glass-panel stat-card">
+                    <div class="icon-wrapper purple"><i class="fa-solid fa-bolt"></i></div>
+                    <div class="stat-info">
+                        <h3>Active Signals</h3>
+                        <p class="value">{{ signals|length }}</p>
+                        <span class="trend neutral">Awaiting Execution</span>
+                    </div>
+                </div>
+                <div class="glass-panel stat-card">
+                    <div class="icon-wrapper pink"><i class="fa-solid fa-eye"></i></div>
+                    <div class="stat-info">
+                        <h3>Watchlist</h3>
+                        <p class="value">{{ watch_list|length }}</p>
+                        <span class="trend up">Monitoring</span>
+                    </div>
+                </div>
+                <div class="glass-panel stat-card">
+                    <div class="icon-wrapper green"><i class="fa-solid fa-check-double"></i></div>
+                    <div class="stat-info">
+                        <h3>Today's Orders</h3>
+                        <p class="value">12</p>
+                        <span class="trend up">Executed</span>
+                    </div>
+                </div>
+
+                <!-- Portfolio Section -->
+                <div class="glass-panel section-panel portfolio-section">
+                    <div class="panel-header">
+                        <h2>Current Holdings</h2>
+                        <button class="btn-primary">View All</button>
+                    </div>
+                    <div class="table-container">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Code/Name</th>
+                                    <th>Stage</th>
+                                    <th>Avg Price</th>
+                                    <th>Remaining Qty</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% if holdings %}
+                                    {% for h in holdings %}
+                                    <tr>
+                                        <td>
+                                            <div class="stock-info">
+                                                <span class="code">{{ h.code }}</span>
+                                                <span class="name">{{ h.name }}</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge stage-{{ h.stage }}">
+                                                {% if h.stage == 0 %}Holding
+                                                {% elif h.stage == 1 %}1/3 Sold
+                                                {% elif h.stage == 2 %}1/2 Sold
+                                                {% else %}Done{% endif %}
+                                            </span>
+                                        </td>
+                                        <td>₩ {{ "{:,.0f}".format(h.avg_buy_price) }}</td>
+                                        <td>{{ h.remaining_qty }} / {{ h.total_buy_qty }}</td>
+                                        <td><span class="status-dot good"></span> Active</td>
+                                    </tr>
+                                    {% endfor %}
+                                {% else %}
+                                    <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No active holdings.</td></tr>
+                                {% endif %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Signals Section -->
+                <div class="glass-panel section-panel signals-section">
+                    <div class="panel-header">
+                        <h2>Pending Signals</h2>
+                    </div>
+                    <div class="signal-list">
+                        {% if signals %}
+                            {% for s in signals %}
+                            <div class="signal-item">
+                                <div class="signal-icon {{ s.signal_type.value.lower() }}">
+                                    <i class="fa-solid {% if 'buy' in s.signal_type.value.lower() %}fa-arrow-down{% else %}fa-arrow-up{% endif %}"></i>
+                                </div>
+                                <div class="signal-details">
+                                    <div class="top-row">
+                                        <span class="s-name">{{ s.name }}</span>
+                                        <span class="s-type {{ s.signal_type.value.lower() }}">{{ s.signal_type.name }}</span>
+                                    </div>
+                                    <div class="bottom-row">
+                                        <span>Current: ₩{{ "{:,.0f}".format(s.current_price) }}</span>
+                                        <span>Target: ₩{{ "{:,.0f}".format(s.target_price) if s.target_price else "N/A" }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="empty-state">No pending signals.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
