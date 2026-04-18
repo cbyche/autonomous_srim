@@ -10,11 +10,11 @@
 - [x] progress.md (진행 체크리스트)
 
 ## Phase 2: S-RIM 계산 엔진
-- [ ] src/srim/models.py (데이터 모델)
-- [ ] src/srim/calculator.py (가격 계산 로직)
-- [ ] src/srim/data_fetcher.py (데이터 수집)
-- [ ] src/srim/analyzer.py (종목 분석기)
-- [ ] 레거시 CSV 기반 검증 테스트
+- [x] src/srim/models.py (데이터 모델)
+- [x] src/srim/calculator.py (가격 계산 로직)
+- [x] src/srim/data_fetcher.py (데이터 수집)
+- [x] src/srim/analyzer.py (종목 분석기)
+- [x] 레거시 CSV 기반 검증 테스트
 
 ## Phase 3: 데이터베이스
 - [ ] src/database/models.py (ORM 모델)
