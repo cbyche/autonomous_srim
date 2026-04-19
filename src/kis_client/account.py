@@ -62,3 +62,55 @@ class KISAccount:
         except Exception as e:
             logger.error(f"주문 예외 발생: {e}")
             return False
+
+    def get_balance(self) -> Dict[str, dict]:
+        """
+        계좌 잔고를 조회하여 {종목코드: {'qty': 수량, 'avg_price': 평단가}} 형태로 반환한다.
+        """
+        if self.auth.get_access_token() == "dummy_token" or self.is_mock:
+            # Mock 모드에서는 빈 잔고 반환 (또는 테스트용 가짜 잔고)
+            return {}
+
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-balance"
+        headers = self.auth.get_base_headers()
+        
+        prefix = "V" if "vps" in self.base_url else "T"
+        headers["tr_id"] = f"{prefix}TTC8434R"
+        
+        cano, prdt_abrv_name = self._split_account()
+        
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt_abrv_name,
+            "AFHR_FLPR_YN": "N",
+            "OFL_YN": "",
+            "INQR_DVSN": "02",
+            "UNPR_DVSN": "01",
+            "FUND_STTL_ICLD_YN": "N",
+            "FNCG_AMT_AUTO_RDPT_YN": "N",
+            "PRCS_DVSN": "00",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": ""
+        }
+        
+        balance_dict = {}
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    for item in data.get("output1", []):
+                        qty = int(item.get("hldg_qty", 0))
+                        if qty > 0:
+                            code = item.get("pdno")
+                            avg_price = float(item.get("pchs_avg_pric", 0))
+                            balance_dict[code] = {
+                                "qty": qty,
+                                "avg_price": int(avg_price)
+                            }
+                    return balance_dict
+            logger.error(f"잔고 조회 실패: {res.text}")
+            return balance_dict
+        except Exception as e:
+            logger.error(f"잔고 조회 예외 발생: {e}")
+            return balance_dict
