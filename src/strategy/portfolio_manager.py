@@ -218,22 +218,44 @@ class PortfolioManager:
         # 1순위 추가매수, 2순위 종합점수 높은 순
         potential_signals.sort(key=lambda x: (x['is_addon'], x['score']), reverse=True)
 
+        # 사이클 시작 시 초기 현금 설정 (jobs.py에서 이미 한 번 조회한 값)
         remaining_cash = available_cash
         for sig in potential_signals:
             if sig['type'] == SignalType.BUY:
                 qty = calculate_buy_quantity(sig['holding'], sig['srim'], benchmark_amount)
                 if qty <= 0: continue
-                
+
                 needed_cash = int(qty * sig['srim'].current_price * 1.01)
-                
+
                 if remaining_cash >= needed_cash:
-                    logger.info(f"[{sig['stock'].code}] BUY 승인 (점수: {sig['score']:.2f}, 수량: {qty})")
-                    self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
-                    remaining_cash -= needed_cash
+                    logger.info(f"[{sig['stock'].code}] BUY 집행 (점수: {sig['score']:.2f}, 수량: {qty}, 필요현금: {needed_cash:,}원)")
+                    success = self.kis_account.place_order(sig['stock'].code, qty, sig['srim'].current_price, "BUY")
+                    if success:
+                        self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                        # 체결 후 KIS에서 실제 잔여 현금 재조회 (연속 체결 시 정확성 보장)
+                        remaining_cash = self.kis_account.get_available_cash()
+                        logger.info(f"[{sig['stock'].code}] BUY 체결 완료 → 갱신된 잔여 현금: {remaining_cash:,}원")
+                    else:
+                        logger.error(f"[{sig['stock'].code}] BUY 주문 실패 — 다음 종목으로 넘어감")
                 else:
-                    logger.info(f"[{sig['stock'].code}] 현금 부족으로 BUY 스킵 (필요: {needed_cash}, 잔고: {remaining_cash})")
+                    logger.info(f"[{sig['stock'].code}] 현금 부족으로 BUY 스킵 (필요: {needed_cash:,}원, 잔고: {remaining_cash:,}원)")
             else:
-                self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                # 매도 시그널: SELL_STAGE_1~4 또는 FORCE_SELL
+                holding = self.repo.get_holding_stage(sig['stock'].code)
+                if holding:
+                    sell_qty = calculate_sell_quantity(holding, sig['type'], benchmark_amount)
+                    if sell_qty <= 0: continue
+
+                    logger.info(f"[{sig['stock'].code}] {sig['type'].name} 집행 (수량: {sell_qty}주 @ {sig['srim'].current_price:,}원)")
+                    success = self.kis_account.place_order(sig['stock'].code, sell_qty, sig['srim'].current_price, "SELL")
+                    if success:
+                        self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                        # 매도 체결 후 현금 재조회 (매도 대금이 예수금에 반영됨)
+                        remaining_cash = self.kis_account.get_available_cash()
+                        logger.info(f"[{sig['stock'].code}] SELL 체결 완료 → 갱신된 잔여 현금: {remaining_cash:,}원")
+                    else:
+                        logger.error(f"[{sig['stock'].code}] SELL 주문 실패 — 다음 종목으로 넘어감")
+
 
     def execute_signal(self, signal_id: int, execution_price: int, execution_qty: int):
         """
