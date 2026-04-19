@@ -66,8 +66,72 @@ class PortfolioManager:
         # 4. 최후의 보루: 설정된 기본 금액
         return float(get_config_value(self.config, "trading", "base_investment_amount", default=1000000.0))
 
+    def sync_balance_with_broker(self) -> dict:
+        """
+        [하드 싱크] 한국투자증권 실제 계좌 잔고를 조회하여 로컬 DB의 HoldingStage를 강제 동기화한다.
+        - 실제 계좌에 없는 종목(사용자가 HTS/MTS에서 수동 매도 등) → 로컬 DB에서도 삭제
+        - 수량 또는 평단가가 다를 경우 → 증권사 데이터를 절대적 진실(Ground Truth)로 덮어씌움
+        - Mock 모드이거나 API 호출 실패 시 → 아무것도 변경하지 않고 안전하게 스킵
+        """
+        broker_balance = self.kis_account.get_balance()
+
+        # Mock 모드 또는 API 실패 시 빈 dict 반환 → 동기화 스킵
+        if not broker_balance:
+            logger.info("잔고 동기화 스킵 (Mock 모드 또는 API 오류)")
+            return {}
+
+        local_holdings = self.repo.db.query(HoldingStage).all()
+
+        for holding in local_holdings:
+            broker_data = broker_balance.get(holding.code)
+
+            if broker_data is None or broker_data.get("qty", 0) == 0:
+                # 실제 계좌에 없거나 수량이 0 → 전량 청산됨으로 간주, DB에서 삭제
+                logger.warning(
+                    f"[SYNC] {holding.name}({holding.code}) 실제 계좌에 없음 → 로컬 DB에서 제거"
+                )
+                self.repo.remove_holding_stage(holding.code)
+            else:
+                broker_qty = broker_data["qty"]
+                broker_avg = broker_data["avg_price"]
+                
+                qty_mismatch = holding.remaining_qty != broker_qty
+                avg_mismatch = abs(holding.avg_buy_price - broker_avg) > 1  # 1원 이내 오차 허용
+
+                if qty_mismatch or avg_mismatch:
+                    logger.warning(
+                        f"[SYNC] {holding.name}({holding.code}) 불일치 감지 "
+                        f"(DB: {holding.remaining_qty}주@{holding.avg_buy_price:.0f}원 "
+                        f"→ 증권사: {broker_qty}주@{broker_avg:.0f}원) → 증권사 데이터로 덮어씌움"
+                    )
+                    # 비중 역산으로 Stage 재추론 (benchmark_amount는 현재 값 재사용)
+                    benchmark_amount = self._calculate_benchmark_amount()
+                    current_inv = broker_qty * broker_avg
+                    ratio = current_inv / benchmark_amount if benchmark_amount > 0 else 1.0
+                    if ratio > 0.875:
+                        inferred_stage = 0
+                    elif ratio > 0.625:
+                        inferred_stage = 1
+                    elif ratio > 0.375:
+                        inferred_stage = 2
+                    else:
+                        inferred_stage = 3
+
+                    self.repo.upsert_holding_stage(
+                        holding.code, holding.name, stage=inferred_stage,
+                        total_buy_qty=holding.total_buy_qty,  # 총 매수 수량은 변경 없음
+                        remaining_qty=broker_qty,
+                        avg_buy_price=broker_avg
+                    )
+
+        logger.info(f"잔고 동기화 완료 (증권사 보유 {len(broker_balance)}종목 확인)")
+        return broker_balance
+
     def analyze_holdings(self):
         """새벽 3시: 보유 중인 종목들만 집중 분석하여 S-RIM 목표가 갱신"""
+        # Step 0: 분석 시작 전 증권사 실제 잔고와 로컬 DB를 강제 동기화
+        self.sync_balance_with_broker()
+
         holdings = self.repo.db.query(HoldingStage).all()
         logger.info(f"보유 종목 {len(holdings)}개 분석 시작...")
         
@@ -81,6 +145,7 @@ class PortfolioManager:
                     roe=srim_result.roe, buy_yield=srim_result.buy_yield
                 )
         logger.info("보유 종목 분석 완료.")
+
 
     def analyze_full_market(self):
         """새벽 4시: KRX 전체 종목을 분석하여 매수 후보군 발굴"""
