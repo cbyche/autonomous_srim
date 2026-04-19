@@ -82,10 +82,15 @@ class SchedulerManager:
         db = SessionLocal()
         try:
             pm = PortfolioManager(db, self.config)
-            # 여기서는 FnGuide를 긁지 않고, 실시간 시세만 가져와서 체크
-            pm.monitor_signals()
-            
-            # 시그널 알림 로직
+
+            # 매 사이클마다 KIS API에서 실제 주문 가능 현금을 새로 조회
+            # (이전 사이클 매수 체결로 줄어든 현금이 즉시 반영됨)
+            available_cash = pm.kis_account.get_available_cash()
+            logger.info(f"장중 모니터링 시작 — 주문 가능 현금: {available_cash:,}원")
+
+            pm.monitor_signals(available_cash=available_cash)
+
+            # 발생한 시그널 텔레그램 알림
             signals = pm.repo.get_pending_signals()
             for sig in signals:
                 if self.notifier:

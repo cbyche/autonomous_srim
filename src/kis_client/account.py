@@ -114,3 +114,44 @@ class KISAccount:
         except Exception as e:
             logger.error(f"잔고 조회 예외 발생: {e}")
             return balance_dict
+
+    def get_available_cash(self) -> int:
+        """
+        주문 가능 현금(예수금) 조회.
+        - Mock 모드에서는 설정된 기본 투자금액을 반환한다.
+        - 실전에서는 KIS inquire-psbl-order API를 호출하여 실제 주문 가능 금액을 반환한다.
+        """
+        if self.auth.get_access_token() == "dummy_token" or self.is_mock:
+            logger.info("[Mock] 주문 가능 현금 조회 → 기본값 5,000,000원 반환")
+            return 5_000_000
+
+        url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+        headers = self.auth.get_base_headers()
+        prefix = "V" if "vps" in self.base_url else "T"
+        headers["tr_id"] = f"{prefix}TTC8908R"
+
+        cano, prdt_abrv_name = self._split_account()
+        params = {
+            "CANO": cano,
+            "ACNT_PRDT_CD": prdt_abrv_name,
+            "PDNO": "005930",   # 종목코드는 임의값 (예수금 조회 목적)
+            "ORD_UNPR": "0",
+            "ORD_DVSN": "01",
+            "CMA_EVLU_AMT_ICLD_YN": "N",
+            "OVRS_ICLD_YN": "N"
+        }
+
+        try:
+            res = requests.get(url, headers=headers, params=params, timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("rt_cd") == "0":
+                    # nrcvb_buy_amt: 미수 없이 살 수 있는 현금 금액
+                    cash = int(data["output"].get("nrcvb_buy_amt", 0))
+                    logger.info(f"주문 가능 현금 조회 완료: {cash:,}원")
+                    return cash
+            logger.error(f"주문 가능 현금 조회 실패: {res.text}")
+            return 0
+        except Exception as e:
+            logger.error(f"주문 가능 현금 조회 예외: {e}")
+            return 0
