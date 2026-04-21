@@ -63,13 +63,15 @@ class KISAccount:
             logger.error(f"주문 예외 발생: {e}")
             return False
 
-    def get_balance(self) -> Dict[str, dict]:
+    def get_balance(self) -> Optional[Dict[str, dict]]:
         """
         계좌 잔고를 조회하여 {종목코드: {'qty': 수량, 'avg_price': 평단가}} 형태로 반환한다.
+        - 빈 계좌인 경우 빈 딕셔너리 {} 반환
+        - API 호출 실패 또는 Mock 모드인 경우 None 반환
         """
         if self.auth.get_access_token() == "dummy_token" or self.is_mock:
-            # Mock 모드에서는 빈 잔고 반환 (또는 테스트용 가짜 잔고)
-            return {}
+            # Mock 모드에서는 None 반환
+            return None
 
         url = f"{self.base_url}/uapi/domestic-stock/v1/trading/inquire-balance"
         headers = self.auth.get_base_headers()
@@ -110,10 +112,10 @@ class KISAccount:
                             }
                     return balance_dict
             logger.error(f"잔고 조회 실패: {res.text}")
-            return balance_dict
+            return None
         except Exception as e:
             logger.error(f"잔고 조회 예외 발생: {e}")
-            return balance_dict
+            return None
 
     def get_available_cash(self) -> int:
         """

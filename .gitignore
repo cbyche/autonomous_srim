@@ -22,6 +22,7 @@ env/
 
 # 설정 (민감 정보 포함)
 config/config.yaml
+.env
 
 # 데이터베이스
 data/
