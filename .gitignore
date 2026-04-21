@@ -39,3 +39,6 @@ logs/
 htmlcov/
 .coverage
 .pytest_cache/
+
+# Legacy
+_legacy_reference/
