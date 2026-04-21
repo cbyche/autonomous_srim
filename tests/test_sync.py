@@ -63,25 +63,19 @@ def _insert_holding(db, code, name, qty, avg_price, stage=0):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 시나리오 1: 증권사에 없는 종목 → 로컬 DB 삭제
+# 시나리오 1: 증권사에 없는 종목 → 로컬 DB 삭제 (빈 계좌 동기화)
 # ══════════════════════════════════════════════════════════════════════════════
 def test_sync_removes_missing_stock(db, manager):
-    """증권사에 없는 종목은 로컬 DB HoldingStage에서 제거되어야 한다."""
+    """증권사에 없는 종목은 로컬 DB HoldingStage에서 제거되어야 한다. (빈 계좌 시나리오 포함)"""
     _insert_holding(db, "005930", "삼성전자", qty=10, avg_price=70_000)
     
-    # 증권사 잔고: 삼성전자 없음
+    # 증권사 잔고: 깡통 계좌 (빈 dict 반환)
     manager.kis_account.get_balance.return_value = {}
 
-    # 동기화 실행
-    # get_balance가 빈 dict이면 Mock 모드로 판단하고 스킵하지만,
-    # 실제 실전 연동에서는 빈 dict = 잔고 없음이므로 별도 구분이 필요하다.
-    # → 테스트를 위해 Mock 모드 우회: 직접 sync 로직만 호출
-    manager.kis_account.get_balance.return_value = {"999999": {"qty": 5, "avg_price": 10000}}
-    # 삼성전자(005930)는 없으므로 삭제되어야 함
     manager.sync_balance_with_broker()
 
     remaining = db.query(HoldingStage).filter(HoldingStage.code == "005930").first()
-    assert remaining is None, "증권사에 없는 종목이 DB에서 삭제되지 않았습니다."
+    assert remaining is None, "빈 계좌 반환 시 로컬 DB가 초기화되지 않았습니다."
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -122,16 +116,32 @@ def test_sync_no_change_when_matched(db, manager):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 시나리오 4: Mock 모드 (빈 dict) → 동기화 스킵, DB 그대로 유지
+# 시나리오 4: Mock 모드 (None) → 동기화 스킵, DB 그대로 유지
 # ══════════════════════════════════════════════════════════════════════════════
-def test_sync_skips_on_empty_balance(db, manager):
-    """get_balance가 빈 dict를 반환하면 동기화가 스킵되고 DB가 그대로 유지된다."""
+def test_sync_skips_on_none_balance(db, manager):
+    """get_balance가 None을 반환하면 동기화가 스킵되고 DB가 그대로 유지된다."""
     _insert_holding(db, "005930", "삼성전자", qty=10, avg_price=70_000, stage=0)
 
-    manager.kis_account.get_balance.return_value = {}
+    manager.kis_account.get_balance.return_value = None
     manager.sync_balance_with_broker()
 
     # DB 변경 없어야 함
     holding = db.query(HoldingStage).filter(HoldingStage.code == "005930").first()
     assert holding is not None, "Mock 모드에서 동기화 스킵이 되지 않았습니다."
     assert holding.remaining_qty == 10
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 시나리오 5: 수동 HTS 매수 → 로컬 DB에 Stage 0으로 신규 등록
+# ══════════════════════════════════════════════════════════════════════════════
+def test_sync_adds_manual_purchase(db, manager):
+    """로컬 DB에 없는 종목이 증권사 잔고에 있으면 새로 편입되어야 한다."""
+    # DB 빈 상태
+    manager.kis_account.get_balance.return_value = {
+        "000660": {"qty": 5, "avg_price": 150_000}
+    }
+    manager.sync_balance_with_broker()
+
+    holding = db.query(HoldingStage).filter(HoldingStage.code == "000660").first()
+    assert holding is not None, "수동 매수 종목이 DB에 추가되지 않았습니다."
+    assert holding.remaining_qty == 5
+    assert holding.stage == 0

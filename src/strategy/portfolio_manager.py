@@ -71,27 +71,29 @@ class PortfolioManager:
         [하드 싱크] 한국투자증권 실제 계좌 잔고를 조회하여 로컬 DB의 HoldingStage를 강제 동기화한다.
         - 실제 계좌에 없는 종목(사용자가 HTS/MTS에서 수동 매도 등) → 로컬 DB에서도 삭제
         - 수량 또는 평단가가 다를 경우 → 증권사 데이터를 절대적 진실(Ground Truth)로 덮어씌움
+        - 증권사 잔고에만 있는 종목(사용자가 수동 매수 등) → 로컬 DB에 Stage 0으로 신규 등록
         - Mock 모드이거나 API 호출 실패 시 → 아무것도 변경하지 않고 안전하게 스킵
         """
         broker_balance = self.kis_account.get_balance()
 
-        # Mock 모드 또는 API 실패 시 빈 dict 반환 → 동기화 스킵
-        if not broker_balance:
+        # Mock 모드 또는 API 실패 시 None 반환 → 동기화 스킵
+        if broker_balance is None:
             logger.info("잔고 동기화 스킵 (Mock 모드 또는 API 오류)")
             return {}
 
         local_holdings = self.repo.db.query(HoldingStage).all()
+        local_codes = {h.code: h for h in local_holdings}
 
-        for holding in local_holdings:
-            broker_data = broker_balance.get(holding.code)
-
+        # 1. 로컬 DB에만 있는 종목 처리 (실제로는 없는 종목 -> 삭제)
+        for code, holding in local_codes.items():
+            broker_data = broker_balance.get(code)
             if broker_data is None or broker_data.get("qty", 0) == 0:
-                # 실제 계좌에 없거나 수량이 0 → 전량 청산됨으로 간주, DB에서 삭제
                 logger.warning(
-                    f"[SYNC] {holding.name}({holding.code}) 실제 계좌에 없음 → 로컬 DB에서 제거"
+                    f"[SYNC] {holding.name}({code}) 실제 계좌에 없음 → 로컬 DB에서 제거"
                 )
-                self.repo.remove_holding_stage(holding.code)
+                self.repo.remove_holding_stage(code)
             else:
+                # 2. 양쪽 모두 있는 종목 처리 (불일치 시 덮어쓰기)
                 broker_qty = broker_data["qty"]
                 broker_avg = broker_data["avg_price"]
                 
@@ -100,29 +102,41 @@ class PortfolioManager:
 
                 if qty_mismatch or avg_mismatch:
                     logger.warning(
-                        f"[SYNC] {holding.name}({holding.code}) 불일치 감지 "
+                        f"[SYNC] {holding.name}({code}) 불일치 감지 "
                         f"(DB: {holding.remaining_qty}주@{holding.avg_buy_price:.0f}원 "
                         f"→ 증권사: {broker_qty}주@{broker_avg:.0f}원) → 증권사 데이터로 덮어씌움"
                     )
-                    # 비중 역산으로 Stage 재추론 (benchmark_amount는 현재 값 재사용)
+                    # 비중 역산으로 Stage 재추론
                     benchmark_amount = self._calculate_benchmark_amount()
                     current_inv = broker_qty * broker_avg
                     ratio = current_inv / benchmark_amount if benchmark_amount > 0 else 1.0
-                    if ratio > 0.875:
-                        inferred_stage = 0
-                    elif ratio > 0.625:
-                        inferred_stage = 1
-                    elif ratio > 0.375:
-                        inferred_stage = 2
-                    else:
-                        inferred_stage = 3
+                    if ratio > 0.875: inferred_stage = 0
+                    elif ratio > 0.625: inferred_stage = 1
+                    elif ratio > 0.375: inferred_stage = 2
+                    else: inferred_stage = 3
 
                     self.repo.upsert_holding_stage(
-                        holding.code, holding.name, stage=inferred_stage,
-                        total_buy_qty=holding.total_buy_qty,  # 총 매수 수량은 변경 없음
+                        code, holding.name, stage=inferred_stage,
+                        total_buy_qty=holding.total_buy_qty,
                         remaining_qty=broker_qty,
                         avg_buy_price=broker_avg
                     )
+
+        # 3. 증권사 잔고에만 있는 종목 처리 (수동 매수 등 -> 신규 등록)
+        for broker_code, broker_data in broker_balance.items():
+            if broker_code not in local_codes and broker_data.get("qty", 0) > 0:
+                broker_qty = broker_data["qty"]
+                broker_avg = broker_data["avg_price"]
+                logger.warning(
+                    f"[SYNC] 미등록 종목({broker_code}) 발견 "
+                    f"({broker_qty}주@{broker_avg:.0f}원) → 로컬 DB에 Stage 0으로 신규 편입"
+                )
+                self.repo.upsert_holding_stage(
+                    broker_code, "미등록(HTS매수)", stage=0,
+                    total_buy_qty=broker_qty,
+                    remaining_qty=broker_qty,
+                    avg_buy_price=broker_avg
+                )
 
         logger.info(f"잔고 동기화 완료 (증권사 보유 {len(broker_balance)}종목 확인)")
         return broker_balance
@@ -215,46 +229,51 @@ class PortfolioManager:
                     'is_addon': holding is not None and sig_type == SignalType.BUY
                 })
 
-        # 1순위 추가매수, 2순위 종합점수 높은 순
-        potential_signals.sort(key=lambda x: (x['is_addon'], x['score']), reverse=True)
+        sell_signals = [sig for sig in potential_signals if sig['type'] != SignalType.BUY]
+        buy_signals = [sig for sig in potential_signals if sig['type'] == SignalType.BUY]
 
-        # 사이클 시작 시 초기 현금 설정 (jobs.py에서 이미 한 번 조회한 값)
-        remaining_cash = available_cash
-        for sig in potential_signals:
-            if sig['type'] == SignalType.BUY:
-                qty = calculate_buy_quantity(sig['holding'], sig['srim'], benchmark_amount)
-                if qty <= 0: continue
+        # 1. 매도 시그널 0순위 전량 집행 (가용 현금 확보 목적)
+        for sig in sell_signals:
+            holding = self.repo.get_holding_stage(sig['stock'].code)
+            if holding:
+                sell_qty = calculate_sell_quantity(holding, sig['type'], benchmark_amount)
+                if sell_qty <= 0: continue
 
-                needed_cash = int(qty * sig['srim'].current_price * 1.01)
-
-                if remaining_cash >= needed_cash:
-                    logger.info(f"[{sig['stock'].code}] BUY 집행 (점수: {sig['score']:.2f}, 수량: {qty}, 필요현금: {needed_cash:,}원)")
-                    success = self.kis_account.place_order(sig['stock'].code, qty, sig['srim'].current_price, "BUY")
-                    if success:
-                        self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
-                        # 체결 후 KIS에서 실제 잔여 현금 재조회 (연속 체결 시 정확성 보장)
-                        remaining_cash = self.kis_account.get_available_cash()
-                        logger.info(f"[{sig['stock'].code}] BUY 체결 완료 → 갱신된 잔여 현금: {remaining_cash:,}원")
-                    else:
-                        logger.error(f"[{sig['stock'].code}] BUY 주문 실패 — 다음 종목으로 넘어감")
+                logger.info(f"[{sig['stock'].code}] {sig['type'].name} 집행 (수량: {sell_qty}주 @ {sig['srim'].current_price:,}원)")
+                new_sig = self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                
+                # 원자적 처리: 주문 발송 + 로컬 DB(HoldingStage) 업데이트
+                success = self.execute_signal(new_sig.id, sig['srim'].current_price, sell_qty)
+                if success:
+                    logger.info(f"[{sig['stock'].code}] SELL 체결 및 DB 갱신 완료")
                 else:
-                    logger.info(f"[{sig['stock'].code}] 현금 부족으로 BUY 스킵 (필요: {needed_cash:,}원, 잔고: {remaining_cash:,}원)")
-            else:
-                # 매도 시그널: SELL_STAGE_1~4 또는 FORCE_SELL
-                holding = self.repo.get_holding_stage(sig['stock'].code)
-                if holding:
-                    sell_qty = calculate_sell_quantity(holding, sig['type'], benchmark_amount)
-                    if sell_qty <= 0: continue
+                    logger.error(f"[{sig['stock'].code}] SELL 주문 실패")
 
-                    logger.info(f"[{sig['stock'].code}] {sig['type'].name} 집행 (수량: {sell_qty}주 @ {sig['srim'].current_price:,}원)")
-                    success = self.kis_account.place_order(sig['stock'].code, sell_qty, sig['srim'].current_price, "SELL")
-                    if success:
-                        self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
-                        # 매도 체결 후 현금 재조회 (매도 대금이 예수금에 반영됨)
-                        remaining_cash = self.kis_account.get_available_cash()
-                        logger.info(f"[{sig['stock'].code}] SELL 체결 완료 → 갱신된 잔여 현금: {remaining_cash:,}원")
-                    else:
-                        logger.error(f"[{sig['stock'].code}] SELL 주문 실패 — 다음 종목으로 넘어감")
+        # 2. 매도 완료 후 최신 가용 현금 확보
+        remaining_cash = self.kis_account.get_available_cash()
+        
+        # 3. 매수 시그널 정렬 (1순위 추가매수, 2순위 종합점수 높은 순)
+        buy_signals.sort(key=lambda x: (x['is_addon'], x['score']), reverse=True)
+
+        for sig in buy_signals:
+            qty = calculate_buy_quantity(sig['holding'], sig['srim'], benchmark_amount)
+            if qty <= 0: continue
+
+            needed_cash = int(qty * sig['srim'].current_price * 1.01)
+
+            if remaining_cash >= needed_cash:
+                logger.info(f"[{sig['stock'].code}] BUY 집행 (점수: {sig['score']:.2f}, 수량: {qty}, 필요현금: {needed_cash:,}원)")
+                new_sig = self.repo.add_signal(sig['stock'].code, sig['stock'].name, sig['type'], sig['srim'].current_price, sig['target_price'])
+                
+                # 원자적 처리: 주문 발송 + 로컬 DB 업데이트 (무한 매수 방지)
+                success = self.execute_signal(new_sig.id, sig['srim'].current_price, qty)
+                if success:
+                    remaining_cash = self.kis_account.get_available_cash()
+                    logger.info(f"[{sig['stock'].code}] BUY 체결 완료 → 갱신된 잔여 현금: {remaining_cash:,}원")
+                else:
+                    logger.error(f"[{sig['stock'].code}] BUY 주문 실패")
+            else:
+                logger.info(f"[{sig['stock'].code}] 현금 부족으로 BUY 스킵 (필요: {needed_cash:,}원, 잔고: {remaining_cash:,}원)")
 
 
     def execute_signal(self, signal_id: int, execution_price: int, execution_qty: int):
